@@ -93,7 +93,7 @@ The **reader must be a fresh agent** every time. A reader that has seen any vers
 
 ## Related work
 
-- **[Modeling Fair Play in Detective Stories with Language Models](https://arxiv.org/abs/2507.13841)** (Wagner, Keydar and Abend, 2025) measures fair play in LLM-written detective stories. It finds they can be unpredictable but fail to balance surprise against fair play, which is the gap this project works on.
+- **[The Challenge and Reward of Fair Play in Narrative](https://arxiv.org/abs/2507.13841)** (Wagner, Keydar and Abend, 2025; first titled *Modeling Fair Play in Detective Stories with Language Models*) measures fair play in LLM-written detective stories. It finds they can be unpredictable but fail to balance surprise against fair play, which is the gap this project works on.
 - **[WHODUNIT](https://arxiv.org/abs/2502.07747)** is a benchmark of mystery stories where models name the culprit. It tests the reverse problem, and could be used to check blind readers.
 - **[ushironoko/novel-harness-skills](https://github.com/ushironoko/novel-harness-skills)** is a set of Claude Code skills for fair-play mysteries, in Japanese. After drafting, 12 parallel readers try to name the culprit before the reveal. PaperbackWriter differs in three ways: it reads in stages with quote verification, it reads the outline before any prose exists, and it allows one fix pass.
 - **[NousResearch/autonovel](https://github.com/NousResearch/autonovel)** is an autonomous seed-to-audiobook novel pipeline driven by model-scored keep-or-retry loops. PaperbackWriter avoids self-scoring as a gate; in our measurements, models grading their own prose scored about three points high.
