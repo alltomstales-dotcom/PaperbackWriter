@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.env
+.env.*
+*.key
+*.key.txt
+# Book work stays local unless you choose to publish it.
+series/
+release/
+*.wav

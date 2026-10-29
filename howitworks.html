@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>How PaperbackWriter Works</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Public+Sans:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a case file read top to bottom; one narrow reading column, wide panels for the loop, the chart and code. */
+:root {
+  --paper: #eef1f4;
+  --sheet: #ffffff;
+  --ink: #18212c;
+  --muted: #566170;
+  --rule: #cdd4dc;
+  --pencil: #b3261e;      /* the red pencil: gates, failures, the culprit line */
+  --mark: #f3d34a;        /* highlighter: verified quotes */
+  --mark-ink: #18212c;
+  --pass: #2e6b4f;
+  --code-bg: #f6f8fa;
+  --display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #12171d; --sheet: #1a2028; --ink: #e5e9ee; --muted: #9aa5b3; --rule: #2e3742;
+    --pencil: #ff6f61; --mark: #6b5c12; --mark-ink: #fff6c8; --pass: #6cc59a; --code-bg: #141a21;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #12171d; --sheet: #1a2028; --ink: #e5e9ee; --muted: #9aa5b3; --rule: #2e3742;
+  --pencil: #ff6f61; --mark: #6b5c12; --mark-ink: #fff6c8; --pass: #6cc59a; --code-bg: #141a21;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.6; margin: 0; }
+.wrap { max-width: 980px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 80px; }
+.col { max-width: 66ch; }
+h1, h2, h3 { font-family: var(--display); font-weight: 400; line-height: 1.1; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2.6rem, 7vw, 4.6rem); }
+h1 em { color: var(--pencil); }
+h2 { font-size: clamp(1.9rem, 4.5vw, 2.6rem); margin-bottom: 14px; }
+h3 { font-size: 1.45rem; margin-bottom: 6px; }
+p { margin: 0 0 14px; }
+a { color: var(--pencil); }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--pencil); outline-offset: 2px; }
+.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+.lede { font-size: 1.2rem; color: var(--muted); max-width: 60ch; margin-top: 18px; }
+section { margin-top: 72px; display: grid; gap: 18px; }
+code, pre { font-family: var(--mono); font-size: 13.5px; }
+:not(pre) > code { background: var(--code-bg); border: 1px solid var(--rule); border-radius: 4px; padding: 1px 5px; }
+pre { background: var(--code-bg); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; overflow-x: auto; margin: 0; line-height: 1.5; }
+.scroll { overflow-x: auto; }
+mark { background: var(--mark); color: var(--mark-ink); padding: 0 2px; }
+.pencil { color: var(--pencil); font-weight: 600; }
+.pass { color: var(--pass); font-weight: 600; }
+
+/* the loop */
+.loop { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; counter-reset: stage -1; }
+.loop li { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; counter-increment: stage; min-width: 0; }
+.loop li::before { content: counter(stage); font-family: var(--mono); font-size: 12px; color: var(--muted); display: block; }
+.loop li.gate { border-color: var(--pencil); border-width: 2px; }
+.loop li.gate .who::after { content: " · gate"; color: var(--pencil); font-weight: 600; }
+.loop b { display: block; font-size: 1.02rem; }
+.loop .who { font-size: 13px; color: var(--muted); }
+.loop .does { font-size: 14px; margin-top: 6px; }
+.back { font-size: 14px; color: var(--muted); border-left: 3px solid var(--pencil); padding-left: 12px; }
+
+/* plan files */
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+td:first-child { font-family: var(--mono); font-size: 13px; white-space: nowrap; }
+tbody tr:hover { background: var(--sheet); }
+
+/* staged read */
+.stage-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 20px; align-items: start; }
+@media (max-width: 760px) { .stage-grid { grid-template-columns: 1fr; } }
+.shelf { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 3px; margin: 8px 0 4px; }
+.shelf span { height: 34px; border-radius: 2px; background: var(--rule); }
+.shelf span.on { background: var(--ink); }
+.shelf span.cp { box-shadow: inset 0 -4px 0 var(--pencil); }
+.shelf-label { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.steps { margin: 10px 0 0; padding-left: 20px; font-size: 15px; }
+.steps li { margin-bottom: 6px; }
+
+/* chart */
+.chart { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 16px; }
+.chart svg { width: 100%; height: auto; display: block; }
+.chart text { fill: var(--muted); font-family: var(--mono); font-size: 11px; }
+.chart .axis { stroke: var(--rule); }
+.chart .grid { stroke: var(--rule); stroke-dasharray: 2 4; }
+.chart .band { fill: var(--pencil); opacity: 0.08; }
+.chart .limit { stroke: var(--pencil); stroke-dasharray: 5 4; fill: none; }
+.chart .line { stroke: var(--ink); stroke-width: 2.5; fill: none; }
+.chart .dot { fill: var(--ink); }
+.chart .lbl { fill: var(--ink); font-weight: 600; }
+.chart .pl { fill: var(--pencil); }
+.legend { display: flex; flex-wrap: wrap; gap: 18px; font-size: 13px; color: var(--muted); margin-top: 8px; }
+.legend i { display: inline-block; width: 18px; height: 0; border-top: 2.5px solid var(--ink); vertical-align: middle; margin-right: 6px; }
+.legend i.dash { border-top: 2px dashed var(--pencil); }
+
+/* code map */
+.mods { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.mod { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 16px; min-width: 0; display: grid; gap: 8px; align-content: start; }
+.mod h3 { font-family: var(--mono); font-size: 15px; font-weight: 600; }
+.mod p { font-size: 14.5px; margin: 0; }
+.mod .cmd { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+details { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 16px; }
+details + details { margin-top: 10px; }
+summary { cursor: pointer; font-weight: 600; }
+details pre { margin-top: 12px; }
+
+.lessons { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.lesson { border-top: 2px solid var(--ink); padding-top: 12px; }
+.lesson b { display: block; font-family: var(--display); font-size: 1.35rem; font-weight: 400; line-height: 1.2; margin-bottom: 6px; }
+.lesson p { font-size: 14.5px; color: var(--muted); }
+.num { font-variant-numeric: tabular-nums; }
+footer { margin-top: 80px; padding-top: 18px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--muted); }
+@media (prefers-reduced-motion: no-preference) {
+  .chart .line { stroke-dasharray: 600; stroke-dashoffset: 0; animation: draw 1.4s ease-out both; }
+  @keyframes draw { from { stroke-dashoffset: 600; } to { stroke-dashoffset: 0; } }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">PaperbackWriter · how it works</div>
+    <h1>A mystery fails when the reader <em>guesses early.</em> So we test for that.</h1>
+    <p class="lede">PaperbackWriter writes fair-play mystery novels with AI agents. The prose is the easy part. The hard part is hiding the culprit, so the plan is designed to hide them and then tested by a reader who has never seen it: before the prose is written, and again after.</p>
+  </header>
+
+  <section aria-labelledby="loop">
+    <div class="col">
+      <div class="eyebrow">The route</div>
+      <h2 id="loop">Nine stages, three of them gates</h2>
+      <p>Each stage writes files into the book's folder, so any agent or person can pick up where the last one stopped. The red-bordered stages are gates: the book doesn't move on until a fresh reader's numbers clear the bar.</p>
+    </div>
+    <ol class="loop">
+      <li><b>Intake</b><span class="who">you and the author</span><div class="does">A 17-row build brief: place, period, sleuth, length, and whether the author wants to read it cold.</div></li>
+      <li><b>Series bible</b><span class="who">planning model</span><div class="does">Canon for every book: geography, cast, voice, a banned list for period books. No culprit.</div></li>
+      <li><b>Book plan</b><span class="who">strongest reasoning model</span><div class="does">Eight files, each under 2,000 words: suspects, suspicion curve, clue map, resolution map, chapter skeletons, canon, self-audit.</div></li>
+      <li class="gate"><b>Plan read</b><span class="who">fresh agent</span><div class="does">Reads only a stripped chapter outline, in five batches, naming suspects with exact quotes.</div></li>
+      <li><b>Draft</b><span class="who">cheaper drafting model</span><div class="does">Five chapters per agent, in order. Obeys canon and nine hiding rules.</div></li>
+      <li class="gate"><b>Blind read</b><span class="who">fresh agent</span><div class="does">The same staged read on the real chapters. Targets: overall 7, fair play 7, misdirection 6.</div></li>
+      <li><b>One fix pass</b><span class="who">drafting model</span><div class="does">Exact orders from the read's findings. Then stop fixing.</div></li>
+      <li><b>Proofread</b><span class="who">fresh agent</span><div class="does">Hard errors only, each one an exact-string replacement.</div></li>
+      <li class="gate"><b>Final read + release</b><span class="who">fresh agent, then the build</span><div class="does">The score has to describe the exact text that ships. Then EPUB, RTF and PDF.</div></li>
+    </ol>
+    <p class="back col"><b>The arrows only go back to the plan.</b> If the plan read fails, the suspects get redesigned, not reworded. If the first blind read scores misdirection under 5, the book goes back to stage 2. Sentence edits have never hidden a culprit.</p>
+  </section>
+
+  <section aria-labelledby="plan">
+    <div class="col">
+      <div class="eyebrow">Stage 2</div>
+      <h2 id="plan">The plan is where the hiding happens</h2>
+      <p>The planner writes the solution first, then designs how suspicion should move chapter by chapter, then places every clue so it has an innocent reading and a louder scene to hide in. The 2,000-word cap per file keeps each one small enough for a model to hold and check.</p>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>File</th><th>What it decides</th></tr></thead>
+        <tbody>
+          <tr><td>01_solution_and_suspects</td><td>The culprit, the method, a one-clock timeline, and six suspects. At least two innocents have motive, method and access on the page, and the culprit is never caught lying.</td></tr>
+          <tr><td>02a_curve</td><td>The suspicion curve a sharp reader should follow, per chapter. Culprit ≤ .20 in the first third, ≤ .30 in the middle, ≤ .35 at 70%.</td></tr>
+          <tr><td>02b_clues</td><td>Every clue: chapter, the louder event it hides behind, its innocent reading, whom it seems to point at. At most one culprit clue per three chapters before two-thirds.</td></tr>
+          <tr><td>03_resolution_map</td><td>Mini-mysteries (raised, doubted, resolved), a false solution the sleuth acts on, and a physical proof chain.</td></tr>
+          <tr><td>04–07_chapters</td><td>One skeleton per chapter: when, where, what happens, which clue IDs appear, the sleuth's own decisions.</td></tr>
+          <tr><td>canon</td><td>Names, ages, doors and keys, clock times, every document's exact wording. Writers obey it and log what they invent.</td></tr>
+          <tr><td>audit</td><td>The planner reads its own plan at 30, 50 and 70% the way a reader would. Its fixes override the other files.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="read">
+    <div class="col">
+      <div class="eyebrow">Stages 3, 5 and 8</div>
+      <h2 id="read">The blind read can't look ahead</h2>
+      <p>The reader is a new agent with no memory of the project. Its folder only ever holds chapters up to the next checkpoint. Later chapters don't exist on disk, so it can't peek.</p>
+    </div>
+    <div class="stage-grid">
+      <div>
+        <div class="shelf" role="img" aria-label="24 chapters; chapters 1 to 12 released; checkpoints at 7, 12, 17, 21 and 24">
+          <span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on cp"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on cp"></span><span></span><span></span><span></span><span></span><span class="cp"></span><span></span><span></span><span></span><span class="cp"></span><span></span><span></span><span class="cp"></span>
+        </div>
+        <div class="shelf-label"><span>ch 1</span><span>released through 12</span><span>ch 24</span></div>
+        <ol class="steps">
+          <li><code>stage</code> copies chapters 1–7 into the reader's folder.</li>
+          <li>The reader writes <code>log_ch07.json</code>: every suspect, a probability, and quotes as evidence.</li>
+          <li><code>check-read</code> verifies the probabilities sum to 1 and finds <mark>every quote</mark> by exact string search. One invented quote voids the log.</li>
+          <li>Only then is the next batch released. Checkpoints fall at about 30%, 50% and 70%, the chapter before the reveal, and the end.</li>
+        </ol>
+      </div>
+      <pre aria-label="Example checkpoint log">{
+  "after_chapter": 7,
+  "suspects": [
+    { "name": "The ferryman"   , "p_culprit": 0.41,
+      "evidence": [{ "chapter": 5,
+        "quote": "<mark>the lantern was already out when the boat came in</mark>" }] },
+    { "name": "The widow",       "p_culprit": 0.33, "evidence": [ … ] },
+    { "name": "The clerk",       "p_culprit": 0.14, "evidence": [ … ] },
+    …
+  ],
+  "how_confident": "lean",
+  "what_gave_it_away": "nothing yet"
+}</pre>
+    </div>
+  </section>
+
+  <section aria-labelledby="curve">
+    <div class="col">
+      <div class="eyebrow">What the gate measures</div>
+      <h2 id="curve">The culprit's line has to stay low</h2>
+      <p>This is a real final read of a 24-chapter historical mystery built this way. The line is the probability the reader gave the true culprit at each checkpoint. The reader didn't settle on the culprit until chapter 20, one chapter before the reveal.</p>
+    </div>
+    <div class="chart">
+      <svg viewBox="0 0 640 300" role="img" aria-label="Culprit probability: 0.04 at chapter 7, 0.04 at 12, 0.15 at 17, 0.85 at 21. Limits: outside the top two at 7 and 12, at most 0.35 at 17.">
+        <!-- x: chapter 1..24 -> 60..610 ; y: 0..1 -> 260..30 -->
+        <rect class="band" x="60" y="30" width="382.6" height="149.5"/>
+        <line class="grid" x1="60" y1="202.5" x2="610" y2="202.5"/>
+        <line class="grid" x1="60" y1="145" x2="610" y2="145"/>
+        <line class="grid" x1="60" y1="87.5" x2="610" y2="87.5"/>
+        <line class="axis" x1="60" y1="260" x2="610" y2="260"/>
+        <line class="axis" x1="60" y1="30" x2="60" y2="260"/>
+        <text x="50" y="264" text-anchor="end">0</text>
+        <text x="50" y="206" text-anchor="end">.25</text>
+        <text x="50" y="149" text-anchor="end">.50</text>
+        <text x="50" y="91" text-anchor="end">.75</text>
+        <text x="50" y="34" text-anchor="end">1</text>
+        <text x="203.5" y="280" text-anchor="middle">7</text>
+        <text x="323.0" y="280" text-anchor="middle">12</text>
+        <text x="442.6" y="280" text-anchor="middle">17</text>
+        <text x="538.3" y="280" text-anchor="middle">21</text>
+        <text x="610" y="280" text-anchor="middle">24</text>
+        <text x="335" y="296" text-anchor="middle">chapter</text>
+        <!-- limit: <= .35 at chapter 17 -->
+        <line class="limit" x1="415" y1="179.5" x2="470" y2="179.5"/>
+        <text class="pl" x="442.6" y="172" text-anchor="middle">≤ .35</text>
+        <text class="pl" x="263" y="236" text-anchor="middle">outside the top two</text>
+        <polyline class="line" points="203.5,250.8 323.0,250.8 442.6,225.5 538.3,64.5"/>
+        <circle class="dot" cx="203.5" cy="250.8" r="4"/>
+        <circle class="dot" cx="323.0" cy="250.8" r="4"/>
+        <circle class="dot" cx="442.6" cy="225.5" r="4"/>
+        <circle class="dot" cx="538.3" cy="64.5" r="4"/>
+        <text class="lbl" x="203.5" y="242" text-anchor="middle">.04</text>
+        <text class="lbl" x="323.0" y="242" text-anchor="middle">.04</text>
+        <text class="lbl" x="456" y="220">.15</text>
+        <text class="lbl" x="528" y="60" text-anchor="end">.85 · the chapter before the reveal</text>
+      </svg>
+      <div class="legend"><span><i></i>culprit's probability (this read)</span><span><i class="dash"></i>gate limit</span><span>shaded: before 70%, where the culprit must stay hidden</span></div>
+    </div>
+    <p class="col">The gate on the plan read is mechanical. <code>gate</code> scores each checkpoint against an answer written down <em>before</em> the read, with hashes of the plan and digest, so nobody can move the answer after seeing the results. At the first two checkpoints the culprit must rank <span class="pass">third or lower</span>; at the third, their probability must be <span class="pass">.35 or less</span>. Fail any and the next batch is <span class="pencil">never released</span>.</p>
+  </section>
+
+  <section aria-labelledby="code">
+    <div class="col">
+      <div class="eyebrow">The code</div>
+      <h2 id="code">Count in Python, judge with the model</h2>
+      <p>A model can't reliably search a long document. In earlier versions, a model auditor reported "no contradictions" in a book with five. So every check here is mechanical: string search, hashes, counts. The models do only the judging: writing, suspecting, scoring.</p>
+    </div>
+    <div class="mods">
+      <div class="mod"><h3>outline.py</h3><p>Turns the planner's chapter files into what a reader would see. It strips labels, clue IDs like <code>(C3)</code>, decision marks and cross-references, and refuses if any planner mark survives. Then it cuts the outline into five batches that end at the checkpoints.</p><div class="cmd">reader · digest</div></div>
+      <div class="mod"><h3>plan.py</h3><p>Structural check of a plan, without printing a spoiler: files present, each under 2,000 words, every chapter covered exactly once, and each digest batch identical to the stripped outline, so the reader reads exactly what was planned.</p><div class="cmd">check-plan</div></div>
+      <div class="mod"><h3>reads.py</h3><p>Staged release that can't go backwards, log verification by exact quote, the culprit's rank and probability, and the plan-read gate with hash-locked answers.</p><div class="cmd">stage · check-read · gate</div></div>
+      <div class="mod"><h3>proof.py</h3><p>Applies fixes as <code>{file, old, new}</code>. A fix whose old text isn't found exactly once is skipped and reported, so a correction can't land in the wrong sentence.</p><div class="cmd">proof</div></div>
+      <div class="mod"><h3>export.py</h3><p>EPUB 3 and RTF from the standard library, plus a 6×9 PDF through fpdf2. <code>*italics*</code> carry through to every format, and a <code>* * *</code> line stays a scene break.</p><div class="cmd">export</div></div>
+      <div class="mod"><h3>narrate.py</h3><p>Optional audiobook: a chapter to WAV with Kokoro text-to-speech, running locally, with a JSON file of pronunciation fixes for names the phonemiser gets wrong.</p><div class="cmd">narrate</div></div>
+    </div>
+    <details>
+      <summary>The pass rule, from <code>reads.py</code></summary>
+<pre>rank, p = ranking(log_path, ref["intended_answer"])
+index = points.index(checkpoint)            # 0 = ~30%, 1 = ~50%, 2 = ~70%
+passed = rank &gt; 2 if index &lt; 2 else p &lt;= 0.35 if index == 2 else True</pre>
+    </details>
+    <details>
+      <summary>Quote verification, from <code>reads.py</code></summary>
+<pre>for i, item in enumerate(evidence, 1):
+    quote, number = item.get("quote", ""), item.get("chapter")
+    if not quote or quote not in chapters.get(number, ""):
+        errors.append(f"Evidence {i}: quotation absent from cited chapter")</pre>
+    </details>
+    <details>
+      <summary>Checkpoints for any length, from <code>outline.py</code></summary>
+<pre>def checkpoints(n_chapters):
+    """About 30%, 50% and 70%, the chapter before the reveal, and the end."""
+    n = n_chapters
+    return (round(n * 0.3), round(n * 0.5), round(n * 0.7), n - 3, n)
+# 24 chapters -&gt; (7, 12, 17, 21, 24)</pre>
+    </details>
+  </section>
+
+  <section aria-labelledby="why">
+    <div class="col">
+      <div class="eyebrow">Why the rules are the rules</div>
+      <h2 id="why">Each rule comes from a book that failed without it</h2>
+    </div>
+    <div class="lessons">
+      <div class="lesson"><b>Prose passes can't fix a plan.</b><p>Five overnight repair passes moved one book from 4.5 to 5.5 and back to 4.5. The faults that mattered were decided before a word was drafted.</p></div>
+      <div class="lesson"><b>Patch passes make it worse.</b><p>Three rounds of fixes moved the culprit's probability <span class="num">.58 → .62 → .72</span>. Each edit that hid one tell created another. Hence one fix pass, then stop.</p></div>
+      <div class="lesson"><b>Self-ratings run about three points high.</b><p>A model grading its own prose gave 7.7 where outside readers gave 4.5. In-house scores are for comparing drafts, never for shipping.</p></div>
+      <div class="lesson"><b>A caught lie gives the culprit away.</b><p>In every read, the strongest tell was the culprit caught in a lie. Red herrings lie; the culprit never does before the reveal.</p></div>
+      <div class="lesson"><b>The quiet custodian gets caught.</b><p>Seven plan reads failed the same way: the reader ranked the quiet person tied to one key object first or second. Rewording didn't help; a different structure did.</p></div>
+      <div class="lesson"><b>An outline read is cheap.</b><p>About 130,000 reader tokens for five checkpoints, and it catches a visible culprit before a single chapter is written. It's harsher than the book, because an outline shows every detail at the same size.</p></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="try">
+    <div class="col">
+      <div class="eyebrow">Try it</div>
+      <h2 id="try">Install and run</h2>
+    </div>
+<pre>git clone https://github.com/alltomstales-dotcom/PaperbackWriter.git
+cd PaperbackWriter
+pip install -e ".[pdf]"
+paperbackwriter --help
+
+# a plan read, end to end
+paperbackwriter reader   series/my-series/book1/plan
+paperbackwriter digest   series/my-series/book1/plan/reader
+paperbackwriter check-plan series/my-series/book1/plan
+paperbackwriter gate     book1/plan/reference.json book1/plan/gate.json 7</pre>
+    <p class="col">The method docs live in <code>.claude/skills/writing-mystery-novels/</code>. Claude Code picks them up when run in the repo, and any other agent can read them as plain Markdown.</p>
+  </section>
+
+  <footer>PaperbackWriter · MIT licence · <a href="https://github.com/alltomstales-dotcom/PaperbackWriter">github.com/alltomstales-dotcom/PaperbackWriter</a></footer>
+</div>
+</body>
+</html>

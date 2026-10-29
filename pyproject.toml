@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paperbackwriter"
+version = "0.1.0"
+description = "A method and toolkit for writing fair-play mystery novels with AI agents, tested by blind readers."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+pdf = ["fpdf2>=2.7"]
+audio = ["kokoro>=0.9", "soundfile", "numpy", "espeakng-loader"]
+dev = ["pytest", "fpdf2>=2.7"]
+
+[project.scripts]
+paperbackwriter = "paperbackwriter.cli:main"
+
+[tool.setuptools]
+packages = ["paperbackwriter"]
